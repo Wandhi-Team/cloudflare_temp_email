@@ -1,402 +1,252 @@
 <script setup>
-import { ref, h, onMounted, watch } from 'vue';
-import { useI18n } from 'vue-i18n'
+import { computed, onMounted, ref } from 'vue';
+import { useScopedI18n } from '@/i18n/app'
 import { useRouter } from 'vue-router'
-import { User, UserCheck, MailBulk } from '@vicons/fa'
 
 import { useGlobalState } from '../store'
 import { api } from '../api'
-import { processItem, getDownloadEmlUrl } from '../utils/email-parser'
+import { getRouterPathWithLang, hashPassword } from '../utils'
+import Turnstile from '../components/Turnstile.vue'
 
-const { localeCache, adminAuth, showAdminAuth } = useGlobalState()
-const router = useRouter()
+import SenderAccess from './admin/SenderAccess.vue'
+import Statistics from "./admin/Statistics.vue"
+import SendBox from './admin/SendBox.vue';
+import Account from './admin/Account.vue';
+import CreateAccount from './admin/CreateAccount.vue';
+import AccountSettings from './admin/AccountSettings.vue';
+import UserManagement from './admin/UserManagement.vue';
+import UserSettings from './admin/UserSettings.vue';
+import UserOauth2Settings from './admin/UserOauth2Settings.vue';
+import RoleAddressConfig from './admin/RoleAddressConfig.vue';
+import Mails from './admin/Mails.vue';
+import MailsUnknow from './admin/MailsUnknow.vue';
+import About from './common/About.vue';
+import Maintenance from './admin/Maintenance.vue';
+import DatabaseManager from './admin/DatabaseManager.vue';
+import Appearance from './common/Appearance.vue';
+import Telegram from './admin/Telegram.vue';
+import Webhook from './admin/Webhook.vue';
+import MailWebhook from './admin/MailWebhook.vue';
+import WorkerConfig from './admin/WorkerConfig.vue';
+import IpBlacklistSettings from './admin/IpBlacklistSettings.vue';
+import AiExtractSettings from './admin/AiExtractSettings.vue';
+import RedeemCodes from './admin/RedeemCodes.vue';
+
+const {
+  adminAuth, showAdminAuth, adminTab, loading,
+  globalTabplacement, showAdminPage, userSettings,
+  openSettings
+} = useGlobalState()
 const message = useMessage()
+const router = useRouter()
 
-const showEmailPassword = ref(false)
-const curEmailPassword = ref("")
-const addressQuery = ref("")
+const SendMail = defineAsyncComponent(() => {
+  loading.value = true;
+  return import('./admin/SendMail.vue')
+    .finally(() => loading.value = false);
+});
+
+const cfToken = ref('')
+const turnstileRef = ref(null)
 
 const authFunc = async () => {
   try {
+    await api.fetch('/open_api/admin_login', {
+      method: 'POST',
+      body: JSON.stringify({
+        password: await hashPassword(tmpAdminAuth.value),
+        cf_token: cfToken.value
+      })
+    });
+    adminAuth.value = tmpAdminAuth.value;
     location.reload()
   } catch (error) {
     message.error(error.message || "error");
+    turnstileRef.value?.refresh?.();
   }
 }
 
-const { t } = useI18n({
-  locale: localeCache.value || 'zh',
-  messages: {
-    en: {
-      title: 'Temp Email Admin',
-      auth: 'Admin Auth',
-      home: 'Home',
-      authTip: 'Please enter the correct auth code',
-      name: 'Name',
-      created_at: 'Created At',
-      showPass: 'Show Passwrod',
-      password: 'Password',
-      passwordTip: 'Please copy the password and you can use it to login to your email account.',
-      delete: 'Delete',
-      deleteTip: 'Are you sure to delete this email?',
-      refresh: 'Refresh',
-      mails: 'Emails',
-      itemCount: 'itemCount',
-      query: 'Query',
-      userCount: 'User Count',
-      activeUser: '7 days Active User',
-      mailCount: 'Mail Count',
-      account: 'Account',
-      unknow: 'Unknow',
-      addressQueryTip: 'Leave blank to query all addresses',
-    },
-    zh: {
-      title: '临时邮件 Admin',
-      auth: 'Admin 授权',
-      home: '首页',
-      authTip: '请输入正确的授权码',
-      name: '名称',
-      created_at: '创建时间',
-      showPass: '显示密码',
-      password: '密码',
-      passwordTip: '请复制密码，你可以使用它登录你的邮箱。',
-      delete: '删除',
-      deleteTip: '确定要删除这个邮箱吗？',
-      refresh: '刷新',
-      mails: '邮件',
-      itemCount: '总数',
-      query: '查询',
-      userCount: '用户总数',
-      activeUser: '周活跃用户',
-      mailCount: '邮件总数',
-      account: '账号',
-      unknow: '未知',
-      addressQueryTip: '留空查询所有地址',
-    }
-  }
-});
-const data = ref([])
-const count = ref(0)
-const page = ref(1)
-const pageSize = ref(20)
+const showLogoutModal = ref(false)
 
-const showPassword = async (id) => {
-  try {
-    curEmailPassword.value = await api.adminShowPassword(id)
-    showEmailPassword.value = true
-  } catch (error) {
-    message.error(error.message || "error");
-    showEmailPassword.value = false
-    curEmailPassword.value = ""
-  }
+const handleLogout = async () => {
+  // 清空管理员认证
+  adminAuth.value = '';
+  // 重置管理员相关状态
+  showAdminAuth.value = false;
+  adminTab.value = 'account';
+  // 显示成功提示并跳转
+  message.success(t('logoutSuccess'));
+  await router.push(getRouterPathWithLang('/', locale.value));
 }
 
-const deleteEmail = async (id) => {
-  try {
-    await api.adminDeleteAddress(id)
-    message.success("success");
-    await fetchData()
-  } catch (error) {
-    message.error(error.message || "error");
-  }
-}
+const { t, locale } = useScopedI18n('views.Admin')
 
-const fetchData = async () => {
-  try {
-    const { results, count: addressCount } = await api.fetch(
-      `/admin/address`
-      + `?limit=${pageSize.value}`
-      + `&offset=${(page.value - 1) * pageSize.value}`
-      + (addressQuery.value ? `&query=${addressQuery.value}` : "")
-    );
-    data.value = results;
-    if (addressCount > 0) {
-      count.value = addressCount;
-    }
-  } catch (error) {
-    console.log(error)
-    message.error(error.message || "error");
-  }
-}
+const showAdminPasswordModal = computed(() => !showAdminPage.value || showAdminAuth.value)
+const tmpAdminAuth = ref('')
+// 判断是否通过 admin password 登录（而非用户管理员权限）
+const isAdminPasswordLogin = computed(() => !!adminAuth.value)
 
-const columns = [
-  {
-    title: "ID",
-    key: "id"
-  },
-  {
-    title: t('name'),
-    key: "name"
-  },
-  {
-    title: t('created_at'),
-    key: "created_at"
-  },
-  {
-    title: 'Action',
-    key: 'actions',
-    render(row) {
-      return h('div', [
-        h(NButton,
-          {
-            type: 'success',
-            ghost: true,
-            onClick: () => showPassword(row.id)
-          },
-          { default: () => t('showPass') }
-        ),
-        h(NButton,
-          {
-            type: 'success',
-            ghost: true,
-            onClick: () => {
-              mailAddress.value = row.name
-              tab.value = "mails"
-            }
-          },
-          { default: () => t('mails') }
-        ),
-        h(NPopconfirm,
-          {
-            onPositiveClick: () => deleteEmail(row.id)
-          },
-          {
-            trigger: () => h(NButton, { type: "error" }, () => t('delete')),
-            default: () => t('deleteTip')
-          }
-        )
-      ])
-    }
+// 获取当前登录方式
+const currentLoginMethod = computed(() => {
+  if (adminAuth.value) {
+    return t('loginViaPassword');
+  } else if (userSettings.value.is_admin) {
+    return t('loginViaUserAdmin');
+  } else if (openSettings.value.disableAdminPasswordCheck) {
+    return t('loginViaDisabledCheck');
   }
-]
-
-watch([page, pageSize], async () => {
-  await fetchData()
+  return '';
 })
-
-const statistics = ref({
-  userCount: 0,
-  mailCount: 0,
-  activeUserCount7days: 0,
-})
-
-const fetchStatistics = async () => {
-  try {
-    const { userCount, activeUserCount7days, mailCount } = await api.fetch(`/admin/statistics`);
-    statistics.value.mailCount = mailCount || 0;
-    statistics.value.userCount = userCount || 0;
-    statistics.value.activeUserCount7days = activeUserCount7days || 0;
-  } catch (error) {
-    console.log(error)
-    message.error(error.message || "error");
-  }
-}
 
 onMounted(async () => {
-  if (!adminAuth.value) {
-    showAdminAuth.value = true
-  } else {
-    await fetchData()
-    await fetchStatistics()
-  }
+  // make sure openSettings is fetched for turnstile check
+  if (!openSettings.value.fetched) await api.getOpenSettings(message);
+  // make sure user_id is fetched
+  if (!userSettings.value.user_id) await api.getUserSettings(message);
 })
-
-const tab = ref("account")
-const mailAddress = ref("")
-const mailData = ref([])
-const mailCount = ref(0)
-const mailPage = ref(1)
-const mailPageSize = ref(20)
-
-watch([mailPage, mailPageSize, mailAddress], async () => {
-  await fetchMailData()
-})
-
-const fetchMailData = async () => {
-  if (!mailAddress.value) {
-    return
-  }
-  try {
-    const { results, count } = await api.fetch(
-      `/admin/mails`
-      + `?address=${mailAddress.value}`
-      + `&limit=${mailPageSize.value}`
-      + `&offset=${(mailPage.value - 1) * mailPageSize.value}`
-    );
-    mailData.value = await Promise.all(results.map(async (item) => {
-      return await processItem(item);
-    }));
-    if (count > 0) {
-      mailCount.value = count;
-    }
-  } catch (error) {
-    console.log(error)
-    message.error(error.message || "error");
-  }
-}
-
-
-const mailUnknowData = ref([])
-const mailUnknowCount = ref(0)
-const mailUnknowPage = ref(1)
-const mailUnknowPageSize = ref(20)
-
-watch([mailUnknowPage, mailUnknowPageSize], async () => {
-  await fetchMailUnknowData()
-})
-
-const fetchMailUnknowData = async () => {
-  try {
-    const { results, count } = await api.fetch(
-      `/admin/mails_unknow`
-      + `?limit=${mailPageSize.value}`
-      + `&offset=${(mailPage.value - 1) * mailPageSize.value}`
-    );
-    mailUnknowData.value = await Promise.all(results.map(async (item) => {
-      return await processItem(item);
-    }));
-    if (count > 0) {
-      mailUnknowCount.value = count;
-    }
-  } catch (error) {
-    console.log(error)
-    message.error(error.message || "error");
-  }
-}
 </script>
 
 <template>
-  <div>
-    <n-modal v-model:show="showAdminAuth" :closable="false" :closeOnEsc="false" :maskClosable="false" preset="dialog"
-      title="Dialog">
-      <template #header>
-        <div>{{ t('auth') }}</div>
-      </template>
-      <p>{{ t('authTip') }}</p>
-      <n-input v-model:value="adminAuth" type="textarea" :autosize="{ minRows: 3 }" />
+  <div v-if="openSettings.fetched && userSettings.fetched">
+    <n-modal v-model:show="showAdminPasswordModal" :closable="false" :closeOnEsc="false" :maskClosable="false"
+      preset="dialog" :title="t('accessHeader')">
+      <p>{{ t('accessTip') }}</p>
+      <n-input v-model:value="tmpAdminAuth" type="password" show-password-on="click" @keyup.enter="authFunc" />
+      <Turnstile ref="turnstileRef" v-if="openSettings.enableGlobalTurnstileCheck" v-model:value="cfToken" />
       <template #action>
-        <n-button @click="authFunc" size="small" tertiary round type="primary">
-          {{ t('auth') }}
+        <n-button @click="authFunc" type="primary" :loading="loading">
+          {{ t('ok') }}
         </n-button>
       </template>
     </n-modal>
-    <n-modal v-model:show="showEmailPassword" preset="dialog" title="Dialog">
-      <template #header>
-        <div>{{ t("password") }}</div>
-      </template>
-      <span>
-        <p>{{ t("passwordTip") }}</p>
-      </span>
-      <n-card>
-        <b>{{ curEmailPassword }}</b>
-      </n-card>
-      <template #action>
-      </template>
-    </n-modal>
-    <n-row>
-      <n-col :span="8">
-        <n-statistic :label="t('userCount')" :value="statistics.userCount">
-          <template #prefix>
-            <n-icon :component="User" />
-          </template>
-        </n-statistic>
-      </n-col>
-      <n-col :span="8">
-        <n-statistic :label="t('activeUser')" :value="statistics.activeUserCount7days">
-          <template #prefix>
-            <n-icon :component="UserCheck" />
-          </template>
-        </n-statistic>
-      </n-col>
-      <n-col :span="8">
-        <n-statistic :label="t('mailCount')" :value="statistics.mailCount">
-          <template #prefix>
-            <n-icon :component="MailBulk" />
-          </template>
-        </n-statistic>
-      </n-col>
-    </n-row>
-    <n-tabs type="segment" v-model:value="tab">
-      <n-tab-pane name="account" :tab="t('account')">
-        <n-input-group>
-          <n-input v-model:value="addressQuery" clearable :placeholder="t('addressQueryTip')" />
-          <n-button @click="fetchData" type="primary" ghost>
-            {{ t('query') }}
-          </n-button>
-        </n-input-group>
-        <div style="display: inline-block;">
-          <n-pagination v-model:page="page" v-model:page-size="pageSize" :item-count="count" :page-sizes="[20, 50, 100]"
-            show-size-picker>
-            <template #prefix="{ itemCount }">
-              {{ t('itemCount') }}: {{ itemCount }}
-            </template>
-          </n-pagination>
-        </div>
-        <n-data-table :columns="columns" :data="data" :bordered="false" />
+    <n-tabs v-if="showAdminPage" type="card" v-model:value="adminTab" :placement="globalTabplacement">
+      <n-tab-pane name="qucickSetup" :tab="t('qucickSetup')">
+        <n-tabs key="quick-setup-tabs" type="bar" justify-content="center" animated>
+          <n-tab-pane name="database" :tab="t('database')">
+            <DatabaseManager />
+          </n-tab-pane>
+          <n-tab-pane name="account_settings" :tab="t('mailbox_settings')">
+            <AccountSettings />
+          </n-tab-pane>
+          <n-tab-pane name="user_settings" :tab="t('user_settings')">
+            <UserSettings />
+          </n-tab-pane>
+          <n-tab-pane name="workerconfig" :tab="t('workerconfig')">
+            <WorkerConfig />
+          </n-tab-pane>
+        </n-tabs>
+      </n-tab-pane>
+      <n-tab-pane name="account" :tab="t('mailbox_management')">
+        <n-tabs key="account-tabs" type="bar" justify-content="center" animated>
+          <n-tab-pane name="account" :tab="t('mailbox_list')">
+            <Account />
+          </n-tab-pane>
+          <n-tab-pane name="account_create" :tab="t('mailbox_create')">
+            <CreateAccount />
+          </n-tab-pane>
+          <n-tab-pane name="account_settings" :tab="t('mailbox_settings')">
+            <AccountSettings />
+          </n-tab-pane>
+          <n-tab-pane name="senderAccess" :tab="t('senderAccess')">
+            <SenderAccess />
+          </n-tab-pane>
+          <n-tab-pane name="ipBlacklistSettings" :tab="t('ipBlacklistSettings')">
+            <IpBlacklistSettings />
+          </n-tab-pane>
+          <n-tab-pane name="aiExtractSettings" :tab="t('aiExtractSettings')">
+            <AiExtractSettings />
+          </n-tab-pane>
+          <n-tab-pane name="webhook" :tab="t('webhookSettings')">
+            <Webhook />
+          </n-tab-pane>
+        </n-tabs>
+      </n-tab-pane>
+      <n-tab-pane name="user" :tab="t('user')">
+        <n-tabs key="user-tabs" type="bar" justify-content="center" animated>
+          <n-tab-pane name="user_management" :tab="t('user_management')">
+            <UserManagement />
+          </n-tab-pane>
+          <n-tab-pane name="user_settings" :tab="t('user_settings')">
+            <UserSettings />
+          </n-tab-pane>
+          <n-tab-pane name="userOauth2Settings" :tab="t('userOauth2Settings')">
+            <UserOauth2Settings />
+          </n-tab-pane>
+          <n-tab-pane name="roleAddressConfig" :tab="t('roleAddressConfig')">
+            <RoleAddressConfig />
+          </n-tab-pane>
+        </n-tabs>
       </n-tab-pane>
       <n-tab-pane name="mails" :tab="t('mails')">
-        <n-input-group>
-          <n-input v-model:value="mailAddress" />
-          <n-button @click="fetchMailData" type="primary" ghost>
-            {{ t('query') }}
-          </n-button>
-        </n-input-group>
-        <n-list hoverable clickable>
-          <div style="display: inline-block; margin-bottom: 10px;">
-            <n-pagination v-model:page="mailPage" v-model:page-size="mailPageSize" :item-count="mailCount" simple>
-              <template #prefix="{ itemCount }">
-                {{ t('itemCount') }}: {{ itemCount }}
-              </template>
-            </n-pagination>
-          </div>
-          <n-list-item v-for="row in mailData" v-bind:key="row.id">
-            <n-thing class="center" :title="row.subject">
-              <template #description>
-                <n-space>
-                  <n-tag type="info">
-                    FROM: {{ row.source }}
-                  </n-tag>
-                  <n-tag type="info">
-                    ID: {{ row.id }}
-                  </n-tag>
-                </n-space>
-              </template>
-              <div v-html="row.message"></div>
-            </n-thing>
-          </n-list-item>
-        </n-list>
+        <n-tabs key="mails-tabs" type="bar" justify-content="center" animated>
+          <n-tab-pane name="mails" :tab="t('mails')">
+            <Mails />
+          </n-tab-pane>
+          <n-tab-pane name="unknow" :tab="t('unknow')">
+            <MailsUnknow />
+          </n-tab-pane>
+          <n-tab-pane name="sendBox" :tab="t('sendBox')">
+            <SendBox />
+          </n-tab-pane>
+          <n-tab-pane name="sendMail" :tab="t('sendMail')">
+            <SendMail />
+          </n-tab-pane>
+          <n-tab-pane name="mailWebhook" :tab="t('mailWebhook')">
+            <MailWebhook />
+          </n-tab-pane>
+        </n-tabs>
       </n-tab-pane>
-      <n-tab-pane name="unknow" :tab="t('unknow')">
-        <n-button @click="fetchMailUnknowData" type="primary" ghost>
-          {{ t('query') }}
-        </n-button>
-        <n-list hoverable clickable>
-          <div style="display: inline-block; margin-bottom: 10px;">
-            <n-pagination v-model:page="mailUnknowPage" v-model:page-size="mailUnknowPageSize"
-              :item-count="mailUnknowCount" simple>
-              <template #prefix="{ itemCount }">
-                {{ t('itemCount') }}: {{ itemCount }}
-              </template>
-            </n-pagination>
-          </div>
-          <n-list-item v-for="row in mailUnknowData" v-bind:key="row.id">
-            <n-thing class="center" :title="row.subject">
-              <template #description>
-                <n-space>
-                  <n-tag type="info">
-                    FROM: {{ row.source }}
-                  </n-tag>
-                  <n-tag type="info">
-                    ID: {{ row.id }}
-                  </n-tag>
-                </n-space>
-              </template>
-              <div v-html="row.message"></div>
-            </n-thing>
-          </n-list-item>
-        </n-list>
+      <n-tab-pane name="telegram" :tab="t('telegram')">
+        <Telegram />
+      </n-tab-pane>
+      <n-tab-pane name="statistics" :tab="t('statistics')">
+        <Statistics />
+      </n-tab-pane>
+      <n-tab-pane v-if="openSettings.enableRedeemCode" name="redeemCodes" :tab="t('redeemCodes')">
+        <RedeemCodes />
+      </n-tab-pane>
+      <n-tab-pane name="maintenance" :tab="t('maintenance')">
+        <n-tabs key="maintenance-tabs" type="bar" justify-content="center" animated>
+          <n-tab-pane name="database" :tab="t('database')">
+            <DatabaseManager />
+          </n-tab-pane>
+          <n-tab-pane name="workerconfig" :tab="t('workerconfig')">
+            <WorkerConfig />
+          </n-tab-pane>
+          <n-tab-pane name="maintenance" :tab="t('maintenance')">
+            <Maintenance />
+          </n-tab-pane>
+        </n-tabs>
+      </n-tab-pane>
+      <n-tab-pane name="appearance" :tab="t('appearance')">
+        <Appearance />
+      </n-tab-pane>
+      <n-tab-pane name="adminAccount" :tab="t('adminAccount')">
+        <div style="display: flex; justify-content: center; padding: 20px;">
+          <n-card style="width: 600px;">
+            <n-space vertical>
+              <n-text strong>{{ t('loginMethod') }}</n-text>
+              <n-text>{{ currentLoginMethod }}</n-text>
+              <n-divider v-if="isAdminPasswordLogin" />
+              <n-button v-if="isAdminPasswordLogin" type="warning" @click="showLogoutModal = true" block>
+                {{ t('logout') }}
+              </n-button>
+            </n-space>
+          </n-card>
+        </div>
+      </n-tab-pane>
+      <n-tab-pane name="about" :tab="t('about')">
+        <About />
       </n-tab-pane>
     </n-tabs>
+    <n-modal v-model:show="showLogoutModal" preset="dialog" :title="t('logoutConfirmTitle')">
+      <p>{{ t('logoutConfirmContent') }}</p>
+      <template #action>
+        <n-button :loading="loading" @click="handleLogout" size="small" tertiary type="warning">
+          {{ t('confirm') }}
+        </n-button>
+      </template>
+    </n-modal>
   </div>
 </template>
 

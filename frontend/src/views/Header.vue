@@ -1,248 +1,190 @@
 <script setup>
-import useClipboard from 'vue-clipboard3'
 import { ref, h, computed, onMounted } from 'vue'
-import { useI18n } from 'vue-i18n'
-import { useRoute, useRouter } from 'vue-router'
+import { useScopedI18n } from '@/i18n/app'
+import { useHead } from '@unhead/vue'
+import { useRoute, useRouter, RouterLink } from 'vue-router'
 import { useIsMobile } from '../utils/composables'
-import { DarkModeFilled, LightModeFilled, MenuFilled, AdminPanelSettingsFilled } from '@vicons/material'
-import { GithubAlt, Language, User, Home, Copy } from '@vicons/fa'
+import {
+    DarkModeFilled, LightModeFilled, MenuFilled,
+    AdminPanelSettingsFilled, MonitorHeartFilled,
+    KeyboardArrowDownOutlined, OpenInNewOutlined
+} from '@vicons/material'
+import { Envelope, GithubAlt, Language, User } from '@vicons/fa'
 
 import { useGlobalState } from '../store'
 import { api } from '../api'
-const { toClipboard } = useClipboard()
-const message = useMessage()
+import { getRouterPathWithLang, hashPassword } from '../utils'
+import { DEFAULT_LOCALE, isSupportedLocale, replaceLocaleInFullPath } from '../i18n/utils'
+import { getLocaleLabel, SUPPORTED_LOCALES } from '../i18n/locale-registry'
+import Turnstile from '../components/Turnstile.vue'
+import { NButton, NIcon } from 'naive-ui'
 
-const { jwt, localeCache, themeSwitch, showAuth, adminAuth, auth } = useGlobalState()
-const { showLogin, openSettings, settings } = useGlobalState()
+const message = useMessage()
+const notification = useNotification()
+
+const {
+    toggleDark, isDark, isTelegram, showAdminPage,
+    showAuth, auth, loading, openSettings, preferredLocale, userSettings
+} = useGlobalState()
 const route = useRoute()
 const router = useRouter()
 const isMobile = useIsMobile()
-const isAdminRoute = computed(() => route.path.includes('admin'))
 
-const showNewEmail = ref(false)
-const showLogout = ref(false)
-const showDelteAccount = ref(false)
-const password = ref('')
-const showPassword = ref(false)
-const emailName = ref("")
-const emailDomain = ref("")
+const showMobileMenu = ref(false)
+const menuValue = computed(() => {
+    if (route.path.includes("user")) return "user";
+    if (route.path.includes("admin")) return "admin";
+    return "home";
+});
 
-const login = async () => {
-    try {
-        jwt.value = password.value;
-        await api.getSettings()
-        location.reload()
-    } catch (error) {
-        message.error(error.message || "error");
-    }
-}
-
-const logout = () => {
-    jwt.value = '';
-    location.reload()
-}
+const cfToken = ref('')
+const turnstileRef = ref(null)
 
 const authFunc = async () => {
     try {
+        await api.fetch('/open_api/site_login', {
+            method: 'POST',
+            body: JSON.stringify({
+                password: await hashPassword(auth.value),
+                cf_token: cfToken.value
+            })
+        });
         location.reload()
     } catch (error) {
         message.error(error.message || "error");
+        turnstileRef.value?.refresh?.();
     }
 }
 
-const changeLocale = (locale) => {
-    localeCache.value = locale;
-    location.reload()
-}
+const languageOptions = SUPPORTED_LOCALES.map((locale) => ({
+    label: getLocaleLabel(locale),
+    value: locale,
+    key: locale,
+}))
 
-const { t } = useI18n({
-    locale: localeCache.value || 'zh',
-    messages: {
-        en: {
-            title: 'Cloudflare Temp Email',
-            dark: 'Dark',
-            light: 'Light',
-            login: 'Login',
-            logout: 'Logout',
-            logoutConfirm: 'Are you sure to logout?',
-            delteAccount: "Delete Account",
-            delteAccountConfirm: "Are you sure to delete your account and all emails for this account?",
-            auth: 'Auth',
-            authTip: 'Please enter the correct auth code',
-            settings: 'Settings',
-            home: 'Home',
-            menu: 'Menu',
-            user: 'User',
-            pleaseGetNewEmail: 'Please login or click "Get New Email" button to get a new email address',
-            getNewEmail: 'Get New Email',
-            getNewEmailTip1: 'Please input the email you want to use. only allow ., a-z, A-Z and 0-9',
-            getNewEmailTip2: 'Levaing it blank will generate a random email address.',
-            getNewEmailTip3: 'You can choose a domain from the dropdown list.',
-            yourAddress: 'Your email address is',
-            password: 'Password',
-            passwordTip: 'Please copy the password and you can use it to login to your email account.', cancel: 'Cancel',
-            ok: 'OK',
-            copy: 'Copy',
-            copied: 'Copied',
-            showPassword: 'Show Password',
-            fetchAddressError: 'Fetch address error, maybe your jwt is invalid or network error.',
-            mailV1Alert: 'You have some mails in v1, please click here to login and visit your history mails.',
-            generateName: 'Generate Fake Name',
-        },
-        zh: {
-            title: 'Cloudflare 临时邮件',
-            dark: '暗色',
-            light: '亮色',
-            login: '登录',
-            logout: '登出',
-            logoutConfirm: '确定要登出吗？',
-            delteAccount: "删除账户",
-            delteAccountConfirm: "确定要删除你的账户和其中的所有邮件吗?",
-            auth: '授权',
-            authTip: '请输入正确的授权码',
-            settings: '设置',
-            home: '主页',
-            menu: '菜单',
-            user: '用户',
-            pleaseGetNewEmail: '请"登录"或点击 "获取新邮箱" 按钮来获取一个新的邮箱地址',
-            getNewEmail: '获取新邮箱',
-            getNewEmailTip1: '请输入你想要使用的邮箱地址, 只允许 ., a-z, A-Z, 0-9',
-            getNewEmailTip2: '留空将会生成一个随机的邮箱地址。',
-            getNewEmailTip3: '你可以从下拉列表中选择一个域名。',
-            yourAddress: '你的邮箱地址是',
-            password: '密码',
-            passwordTip: '请复制密码，你可以使用它登录你的邮箱。',
-            cancel: '取消',
-            ok: '确定',
-            copy: '复制',
-            copied: '已复制',
-            showPassword: '查看密码',
-            fetchAddressError: '获取地址失败, 请检查你的 jwt 是否有效 或 网络是否正常。',
-            mailV1Alert: '你有一些 v1 版本的邮件，请点击此处登录查看。',
-            generateName: '生成随机名字',
-        }
-    }
+const currentLocaleLabel = computed(() => {
+    return languageOptions.find(opt => opt.value === locale.value)?.label || locale.value;
 });
 
-const showUserMenu = computed(() => !!settings.value.address)
+const { t, locale } = useScopedI18n('views.Header')
+
+const changeLocale = async (lang) => {
+    if (!isSupportedLocale(lang)) {
+        return;
+    }
+
+    const currentFullPath = route.fullPath;
+    const targetFullPath = replaceLocaleInFullPath(currentFullPath, lang);
+
+    if (lang === locale.value && targetFullPath === currentFullPath) {
+        showMobileMenu.value = false;
+        return;
+    }
+
+    if (lang === DEFAULT_LOCALE) {
+        preferredLocale.value = DEFAULT_LOCALE;
+    }
+
+    let localeSwitched = false;
+    try {
+        await router.push({ path: targetFullPath, force: true });
+        localeSwitched = router.currentRoute.value.fullPath === targetFullPath;
+        if (!localeSwitched) {
+            await router.replace({ path: targetFullPath, force: true });
+            localeSwitched = router.currentRoute.value.fullPath === targetFullPath;
+        }
+    } catch (error) {
+        console.error('Failed to switch locale', error);
+    } finally {
+        showMobileMenu.value = false;
+    }
+
+    if (localeSwitched) preferredLocale.value = lang;
+}
+
+const version = import.meta.env.PACKAGE_VERSION ? `v${import.meta.env.PACKAGE_VERSION}` : "";
+const showGithubForCurrentUser = computed(() => {
+    if (!openSettings.value.showGithub) return false;
+    if (openSettings.value.showGithubForUser) return true;
+    return showAdminPage.value;
+});
 
 const menuOptions = computed(() => [
     {
-        label: () => h(
-            NButton,
+        label: () => h(NButton,
             {
-                bordered: false,
-                ghost: true,
+                text: true,
                 size: "small",
-                onClick: () => router.push('/')
+                type: menuValue.value == "home" ? "primary" : "default",
+                style: "width: 100%",
+                onClick: async () => {
+                    await router.push(getRouterPathWithLang('/', locale.value));
+                    showMobileMenu.value = false;
+                }
             },
             {
-                default: () => t('home'),
-                icon: () => h(NIcon, { component: Home })
-            }
-        ),
+                default: () => t('mailbox'),
+                icon: () => h(NIcon, { component: Envelope })
+            }),
         key: "home"
     },
     {
         label: () => h(
             NButton,
             {
-                bordered: false,
-                ghost: true,
+                text: true,
                 size: "small",
-                onClick: () => router.push('/admin')
+                type: menuValue.value == "user" ? "primary" : "default",
+                style: "width: 100%",
+                onClick: async () => {
+                    await router.push(getRouterPathWithLang("/user", locale.value));
+                    showMobileMenu.value = false;
+                }
             },
             {
-                default: () => "Admin",
+                default: () => t('userCenter'),
+                icon: () => h(NIcon, { component: User }),
+            }
+        ),
+        key: "user",
+        show: !isTelegram.value
+    },
+    {
+        label: () => h(
+            NButton,
+            {
+                text: true,
+                size: "small",
+                type: menuValue.value == "admin" ? "primary" : "default",
+                style: "width: 100%",
+                onClick: async () => {
+                    loading.value = true;
+                    await router.push(getRouterPathWithLang('/admin', locale.value));
+                    loading.value = false;
+                    showMobileMenu.value = false;
+                }
+            },
+            {
+                default: () => t('admin'),
                 icon: () => h(NIcon, { component: AdminPanelSettingsFilled }),
             }
         ),
-        show: !!adminAuth.value,
+        show: showAdminPage.value,
         key: "admin"
     },
     {
         label: () => h(
             NButton,
             {
-                bordered: false,
-                ghost: true,
+                text: true,
                 size: "small",
+                style: "width: 100%",
+                onClick: () => { toggleDark(); showMobileMenu.value = false; }
             },
             {
-                default: () => t('user'),
-                icon: () => h(NIcon, { component: User }),
-            }
-        ),
-        show: showUserMenu.value,
-        key: "user",
-        children: [
-            {
-                label: () => h(
-                    NButton,
-                    {
-                        tertiary: true,
-                        ghost: true,
-                        size: "small",
-                        onClick: () => { showPassword.value = true }
-                    },
-                    { default: () => t('showPassword') }
-                ),
-                key: "showPassword"
-            },
-            {
-                label: () => h(
-                    NButton,
-                    {
-                        tertiary: true,
-                        ghost: true,
-                        size: "small",
-                        onClick: () => { router.push('/settings') }
-                    },
-                    { default: () => t('settings') }
-                ),
-                key: "settings"
-            },
-            {
-                label: () => h(
-                    NButton,
-                    {
-                        tertiary: true,
-                        ghost: true,
-                        size: "small",
-                        onClick: () => { showLogout.value = true }
-                    },
-                    { default: () => t('logout') }
-                ),
-                key: "logout"
-            },
-            {
-                label: () => h(
-                    NButton,
-                    {
-                        tertiary: true,
-                        ghost: true,
-                        size: "small",
-                        onClick: () => { showDelteAccount.value = true }
-                    },
-                    { default: () => t('delteAccount') }
-                ),
-                key: "delte_account"
-            }
-        ]
-    },
-    {
-        label: () => h(
-            NButton,
-            {
-                bordered: false,
-                ghost: true,
-                size: "small",
-                onClick: () => { themeSwitch.value = !themeSwitch.value }
-            },
-            {
-                default: () => themeSwitch.value ? t('light') : t('dark'),
+                default: () => isDark.value ? t('light') : t('dark'),
                 icon: () => h(
-                    NIcon, { component: themeSwitch.value ? LightModeFilled : DarkModeFilled }
+                    NIcon, { component: isDark.value ? LightModeFilled : DarkModeFilled }
                 )
             }
         ),
@@ -252,254 +194,136 @@ const menuOptions = computed(() => [
         label: () => h(
             NButton,
             {
-                bordered: false,
-                ghost: true,
+                text: true,
                 size: "small",
-                onClick: () => localeCache.value == 'zh' ? changeLocale('en') : changeLocale('zh')
-            },
-            {
-                default: () => localeCache.value == 'zh' ? "English" : "中文",
-                icon: () => h(
-                    NIcon, { component: Language }
-                )
-            }
-        ),
-        key: "lang"
-    },
-    {
-        label: () => h(
-            NButton,
-            {
-                bordered: !isMobile.value,
-                ghost: true,
-                size: "small",
+                style: "width: 100%",
                 tag: "a",
                 target: "_blank",
-                href: "https://github.com/dreamhunter2333/cloudflare_temp_email",
+                href: openSettings.value?.statusUrl,
             },
             {
-                default: () => "Github",
-                icon: () => h(NIcon, { component: GithubAlt })
+                default: () => t('status'),
+                icon: () => h(NIcon, { component: MonitorHeartFilled })
             }
         ),
-        key: "github"
+        show: !!openSettings.value?.statusUrl,
+        key: "status"
     }
 ]);
 
-const menuOptionsMobile = computed(() => [
-    {
-        label: t('menu'),
-        icon: () => h(
-            NIcon,
-            {
-                component: MenuFilled
-            }
-        ),
-        key: "menu",
-        children: menuOptions.value
-    },
-]);
+useHead({
+    title: () => openSettings.value.title || t('title'),
+    meta: [
+        { name: "description", content: openSettings.value.description || t('title') },
+    ]
+});
 
-
-const copy = async () => {
-    try {
-        await toClipboard(settings.value.address)
-        message.success(t('copied'));
-    } catch (e) {
-        message.error(e.message || "error");
+const logoClickCount = ref(0);
+const logoClick = async () => {
+    if (route.path.includes("admin")) {
+        logoClickCount.value = 0;
+        return;
+    }
+    if (logoClickCount.value >= 5) {
+        logoClickCount.value = 0;
+        message.info("Change to admin Page");
+        loading.value = true;
+        await router.push(getRouterPathWithLang('/admin', locale.value));
+        loading.value = false;
+    } else {
+        logoClickCount.value++;
+    }
+    if (logoClickCount.value > 0) {
+        message.info(`Click ${5 - logoClickCount.value + 1} times to enter the admin page`);
     }
 }
 
-const generateNameLoading = ref(false);
-const generateName = async () => {
-    try {
-        generateNameLoading.value = true;
-        const { faker } = await import('https://esm.sh/@faker-js/faker');
-        emailName.value = faker.person
-            .fullName()
-            .replace(/\s+/g, '.')
-            .replace(/[^a-zA-Z0-9.]/g, '')
-            .toLowerCase();
-    } catch (error) {
-        message.error(error.message || "error");
-    } finally {
-        generateNameLoading.value = false;
-    }
-};
-
-const newEmail = async () => {
-    try {
-        const res = await api.fetch(
-            `/api/new_address`
-            + `?name=${emailName.value || ''}`
-            + `&domain=${emailDomain.value || ''}`
-        );
-        jwt.value = res["jwt"];
-        await api.getSettings();
-        showNewEmail.value = false;
-        showPassword.value = true;
-    } catch (error) {
-        message.error(error.message || "error");
-    }
-};
-
-const deleteAccount = async () => {
-    try {
-        await api.fetch(`/api/delete_address`, {
-            method: 'DELETE'
-        });
-        jwt.value = '';
-        location.reload()
-    } catch (error) {
-        message.error(error.message || "error");
-    }
-};
-
 onMounted(async () => {
-    await api.getOpenSettings(message);
-    emailDomain.value = openSettings.value.domains ? openSettings.value.domains[0].value : "";
+    await api.getOpenSettings(message, notification);
+    // make sure user_id is fetched
+    if (!userSettings.value.user_id) await api.getUserSettings(message);
 });
 </script>
 
 <template>
     <div>
-        <n-layout-header>
-            <h2 style="display: inline-block; margin-left: 10px;">{{ t('title') }}</h2>
-            <div>
-                <n-menu v-if="!isMobile" mode="horizontal" :options="menuOptions" />
-                <n-menu v-else mode="horizontal" :options="menuOptionsMobile" />
-            </div>
-        </n-layout-header>
-        <div v-if="!isAdminRoute">
-            <n-card v-if="!settings.fetched">
-                <n-skeleton style="height: 50vh" />
-            </n-card>
-            <div v-else-if="settings.address">
-                <n-alert v-if="settings.has_v1_mails" type="warning" show-icon closable>
-                    <span>
-                        <n-button tag="a" target="_blank" tertiary type="info" size="small"
-                            href="https://mail-v1.awsl.uk">
-                            <b>{{ t('mailV1Alert') }} </b>
+        <n-page-header>
+            <template #title>
+                <h3>{{ openSettings.title || t('title') }}</h3>
+            </template>
+            <template #avatar>
+                <div @click="logoClick">
+                    <n-avatar style="margin-left: 10px;" src="/logo.png" />
+                </div>
+            </template>
+            <template #extra>
+                <n-space align="center" class="header-extra">
+                    <n-menu v-if="!isMobile" mode="horizontal" :options="menuOptions" responsive />
+                    <n-button v-else :text="true" @click="showMobileMenu = !showMobileMenu">
+                        <template #icon>
+                            <n-icon :component="MenuFilled" />
+                        </template>
+                        {{ t('menu') }}
+                    </n-button>
+                    <n-dropdown v-if="!isMobile" :options="languageOptions" @select="changeLocale" trigger="click" class="header-locale-dropdown">
+                        <n-button text size="small" class="header-locale-button" style="padding: 0 10px;">
+                            <template #icon>
+                                <n-icon :component="Language" />
+                            </template>
+                            {{ currentLocaleLabel }}
+                            <n-icon :component="KeyboardArrowDownOutlined" style="margin-left: 4px;" />
                         </n-button>
-                    </span>
-                </n-alert>
-                <n-alert type="info" show-icon>
-                    <span>
-                        <b>{{ t('yourAddress') }} <b>{{ settings.address }}</b></b>
-                        <n-button style="margin-left: 10px" @click="copy" size="small" tertiary round type="primary">
-                            <n-icon :component="Copy" /> {{ t('copy') }}
-                        </n-button>
-                    </span>
-                </n-alert>
-            </div>
-            <n-card v-else>
-                <n-result status="info" :description="t('pleaseGetNewEmail')">
-                    <template #footer>
-                        <n-alert v-if="jwt" type="warning" show-icon>
-                            <span>{{ t('fetchAddressError') }}</span>
-                        </n-alert>
-                        <n-button @click="showLogin = true" tertiary round type="primary">
-                            {{ t('login') }}
-                        </n-button>
-                        <n-button @click="showNewEmail = true" tertiary round type="primary">
-                            {{ t('getNewEmail') }}
-                        </n-button>
-                    </template>
-                </n-result>
-            </n-card>
-        </div>
-        <n-modal v-model:show="showNewEmail" preset="dialog" title="Dialog">
-            <template #header>
-                <div>{{ t('getNewEmail') }}</div>
+                    </n-dropdown>
+                    <n-button
+                        v-if="!isMobile && showGithubForCurrentUser"
+                        text
+                        size="small"
+                        class="header-version-button"
+                        tag="a"
+                        target="_blank"
+                        href="https://github.com/dreamhunter2333/cloudflare_temp_email"
+                    >
+                        <template #icon>
+                            <n-icon :component="GithubAlt" />
+                        </template>
+                        {{ version || 'Github' }}
+                    </n-button>
+                </n-space>
             </template>
-            <n-spin :show="generateNameLoading">
-                <span>
-                    <p>{{ t("getNewEmailTip1") }}</p>
-                    <p>{{ t("getNewEmailTip2") }}</p>
-                    <p>{{ t("getNewEmailTip3") }}</p>
-                </span>
-                <n-button @click="generateName" style="margin-bottom: 10px;">
-                    {{ t('generateName') }}
-                </n-button>
-                <n-input-group>
-                    <n-input-group-label v-if="openSettings.prefix">
-                        {{ openSettings.prefix }}
-                    </n-input-group-label>
-                    <n-input v-model:value="emailName" />
-                    <n-input-group-label>@</n-input-group-label>
-                    <n-select v-model:value="emailDomain" :consistent-menu-width="false"
-                        :options="openSettings.domains" />
-                </n-input-group>
-            </n-spin>
-            <template #action>
-                <n-button @click="showNewEmail = false">
-                    {{ t('cancel') }}
-                </n-button>
-                <n-button @click="newEmail" type="primary">
-                    {{ t('ok') }}
-                </n-button>
-            </template>
-        </n-modal>
-        <n-modal v-model:show="showPassword" preset="dialog" title="Dialog">
-            <template #header>
-                <div>{{ t("password") }}</div>
-            </template>
-            <span>
-                <p>{{ t("passwordTip") }}</p>
-            </span>
-            <n-card>
-                <b>{{ jwt }}</b>
-            </n-card>
-            <template #action>
-            </template>
-        </n-modal>
-        <n-modal v-model:show="showLogin" preset="dialog" title="Dialog">
-            <template #header>
-                <div>{{ t('login') }}</div>
-            </template>
-            <n-input v-model:value="password" type="textarea" :autosize="{
-                minRows: 3
-            }" />
-            <template #action>
-                <n-button @click="login" size="small" tertiary round type="primary">
-                    {{ t('login') }}
-                </n-button>
-            </template>
-        </n-modal>
-        <n-modal v-model:show="showLogout" preset="dialog" title="Dialog">
-            <template #header>
-                <div>{{ t('logout') }}</div>
-            </template>
-            <p>{{ t('logoutConfirm') }}</p>
-            <template #action>
-                <n-button @click="logout" size="small" tertiary round type="primary">
-                    {{ t('logout') }}
-                </n-button>
-            </template>
-        </n-modal>
-        <n-modal v-model:show="showDelteAccount" preset="dialog" title="Dialog">
-            <template #header>
-                <div>{{ t('delteAccount') }}</div>
-            </template>
-            <p>{{ t('delteAccountConfirm') }}</p>
-            <template #action>
-                <n-button @click="deleteAccount" size="small" tertiary round type="error">
-                    {{ t('delteAccount') }}
-                </n-button>
-            </template>
-        </n-modal>
+        </n-page-header>
+        <n-drawer v-model:show="showMobileMenu" placement="top" style="height: 100vh;">
+            <n-drawer-content :title="t('menu')" closable>
+                <n-menu :options="menuOptions" />
+                <div class="mobile-menu-actions">
+                    <n-dropdown :options="languageOptions" @select="changeLocale" trigger="click" class="header-locale-dropdown">
+                        <button type="button" class="mobile-menu-utility-button">
+                            <n-icon :component="Language" />
+                            <span class="mobile-menu-action-label">{{ currentLocaleLabel }}</span>
+                            <n-icon :component="KeyboardArrowDownOutlined" class="mobile-menu-action-arrow" />
+                        </button>
+                    </n-dropdown>
+                    <a
+                        v-if="showGithubForCurrentUser"
+                        class="mobile-menu-utility-button"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        href="https://github.com/dreamhunter2333/cloudflare_temp_email"
+                    >
+                        <n-icon :component="GithubAlt" />
+                        <span class="mobile-menu-action-label">{{ version || 'Github' }}</span>
+                        <n-icon :component="OpenInNewOutlined" class="mobile-menu-action-arrow" />
+                    </a>
+                </div>
+            </n-drawer-content>
+        </n-drawer>
         <n-modal v-model:show="showAuth" :closable="false" :closeOnEsc="false" :maskClosable="false" preset="dialog"
-            title="Dialog">
-            <template #header>
-                <div>{{ t('auth') }}</div>
-            </template>
-            <p>{{ t('authTip') }}</p>
-            <n-input v-model:value="auth" type="textarea" :autosize="{
-                minRows: 3
-            }" />
+            :title="t('accessHeader')">
+            <p>{{ t('accessTip') }}</p>
+            <n-input v-model:value="auth" type="password" show-password-on="click" @keyup.enter="authFunc" />
+            <Turnstile ref="turnstileRef" v-if="openSettings.enableGlobalTurnstileCheck" v-model:value="cfToken" />
             <template #action>
-                <n-button @click="authFunc" size="small" tertiary round type="primary">
-                    {{ t('auth') }}
+                <n-button :loading="loading" @click="authFunc" type="primary">
+                    {{ t('ok') }}
                 </n-button>
             </template>
         </n-modal>
@@ -507,10 +331,111 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+:deep(.n-page-header) {
+    align-items: center;
+    flex-wrap: nowrap;
+}
+
+:deep(.n-page-header__main) {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+}
+
+:deep(.n-page-header__title) {
+    min-width: 0;
+    overflow: hidden;
+}
+
+:deep(.n-page-header__title h3) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+:deep(.n-page-header__extra) {
+    flex: 0 0 auto;
+}
+
 .n-layout-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
+}
+
+.header-extra {
+    align-items: center;
+    flex-wrap: nowrap;
+}
+
+.header-extra :deep(.n-space-item) {
+    display: flex;
+    align-items: center;
+}
+
+.header-locale-button {
+    display: inline-flex;
+    align-items: center;
+}
+
+.header-locale-button :deep(.n-button__content) {
+    display: inline-flex;
+    align-items: center;
+}
+
+.header-locale-button :deep(.n-icon) {
+    display: inline-flex;
+    align-items: center;
+}
+
+.header-version-button {
+    display: inline-flex;
+    align-items: center;
+}
+
+.header-version-button :deep(.n-button__content) {
+    display: inline-flex;
+    align-items: center;
+}
+
+.mobile-menu-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(128, 128, 128, 0.16);
+}
+
+.mobile-menu-utility-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 36px;
+    width: 100%;
+    min-width: 0;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-decoration: none;
+    opacity: 0.82;
+    cursor: pointer;
+}
+
+.mobile-menu-action-label {
+    margin: 0 6px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mobile-menu-action-arrow {
+    flex: 0 0 auto;
+    margin-left: 2px;
 }
 
 .n-alert {
@@ -522,4 +447,34 @@ onMounted(async () => {
 .n-card {
     margin-top: 10px;
 }
+
+.center {
+    display: flex;
+    text-align: left;
+    place-items: center;
+    justify-content: center;
+    margin: 20px;
+}
+
+.n-form .n-button {
+    margin-top: 10px;
+}
+
+@media (max-width: 640px) {
+    :deep(.n-page-header) {
+        padding: 10px 12px;
+    }
+
+    :deep(.n-page-header__title) {
+        min-width: 0;
+    }
+
+    :deep(.n-page-header__title h3) {
+        max-width: calc(100vw - 104px);
+        margin: 0;
+        font-size: clamp(16px, 5vw, 20px);
+        line-height: 1.2;
+    }
+}
+
 </style>
